@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { encryptText, decryptText } from './crypto';
 
 const DB_DIR = path.join(process.cwd(), 'data');
 const DB_PATH = path.join(DB_DIR, 'feedback.db');
@@ -50,6 +51,17 @@ export interface Feedback {
   likes: number;
   created_at: string;
   hasLiked?: boolean;
+}
+
+// Helper to decrypt feedback records
+function decryptFeedback(feedback: Feedback | undefined): Feedback | undefined {
+  if (!feedback) return feedback;
+  return {
+    ...feedback,
+    name: decryptText(feedback.name),
+    message: decryptText(feedback.message),
+    image_path: feedback.image_path ? decryptText(feedback.image_path) : null
+  };
 }
 
 // In-memory write queue to handle high write load gracefully and prevent "database is locked" (SQLITE_BUSY) errors.
@@ -107,6 +119,7 @@ const writeQueue = new WriteQueue();
 
 export function getAllFeedbacks(visitorId?: string): Feedback[] {
   // SQLite is fast at reads, can run concurrently outside of queue
+  let results: Feedback[] = [];
   if (visitorId) {
     const stmt = db.prepare(`
       SELECT f.*, 
@@ -114,27 +127,35 @@ export function getAllFeedbacks(visitorId?: string): Feedback[] {
       FROM feedbacks f
       ORDER BY f.likes DESC, f.created_at DESC
     `);
-    return stmt.all(visitorId) as Feedback[];
+    results = stmt.all(visitorId) as Feedback[];
   } else {
     const stmt = db.prepare(`
       SELECT *, 0 as hasLiked FROM feedbacks ORDER BY likes DESC, created_at DESC
     `);
-    return stmt.all() as Feedback[];
+    results = stmt.all() as Feedback[];
   }
+  return results.map(f => decryptFeedback(f) as Feedback);
 }
 
 export async function createFeedback(id: string, name: string | null, message: string, imagePath: string | null): Promise<Feedback> {
   return writeQueue.enqueue(() => {
+    // Encrypt fields before storing them
+    const encryptedName = encryptText(name || 'Anonymous');
+    const encryptedMessage = encryptText(message);
+    const encryptedImagePath = imagePath ? encryptText(imagePath) : null;
+
     const stmt = db.prepare(`
       INSERT INTO feedbacks (id, name, message, image_path, likes)
       VALUES (?, ?, ?, ?, 0)
     `);
-    stmt.run(id, name || 'Anonymous', message, imagePath);
+    stmt.run(id, encryptedName, encryptedMessage, encryptedImagePath);
 
     const selectStmt = db.prepare(`SELECT *, 0 as hasLiked FROM feedbacks WHERE id = ?`);
-    return selectStmt.get(id) as Feedback;
+    const inserted = selectStmt.get(id) as Feedback;
+    return decryptFeedback(inserted) as Feedback;
   });
 }
+
 
 export async function toggleLike(feedbackId: string, visitorId: string): Promise<{ likes: number; hasLiked: boolean }> {
   return writeQueue.enqueue(() => {

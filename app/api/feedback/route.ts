@@ -4,6 +4,7 @@ import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
+import { encryptBuffer } from '@/lib/crypto';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 
@@ -52,16 +53,16 @@ export async function POST(request: NextRequest) {
       const arrayBuffer = await imageFile.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
 
-      // Generate unique name
-      const filename = `${uuidv4()}.webp`;
+      // Generate unique name with .enc extension
+      const filename = `${uuidv4()}.enc`;
       const fullPath = path.join(UPLOAD_DIR, filename);
 
       // 2. Perform Server-side compression to <= 1MB using sharp.
       // We'll resize to sensible web dimensions (e.g. max width 1200px) and export as WebP with optimized quality.
       const compressedBuffer = await sharp(buffer)
-        .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 80 })
-        .toBuffer();
+         .resize({ width: 1200, height: 1200, fit: 'inside', withoutEnlargement: true })
+         .webp({ quality: 80 })
+         .toBuffer();
 
       // Ensure the compressed file is indeed under 1MB; if not, lower the quality recursively
       let finalBuffer = compressedBuffer;
@@ -74,9 +75,12 @@ export async function POST(request: NextRequest) {
         quality -= 15;
       }
 
-      // Write compressed image
-      fs.writeFileSync(fullPath, finalBuffer);
-      imagePath = `/uploads/${filename}`;
+      // Encrypt the compressed buffer
+      const encryptedBuffer = encryptBuffer(finalBuffer);
+
+      // Write encrypted image
+      fs.writeFileSync(fullPath, encryptedBuffer);
+      imagePath = `/api/feedback/image/${filename}`;
     }
 
     const newFeedback = await createFeedback(
