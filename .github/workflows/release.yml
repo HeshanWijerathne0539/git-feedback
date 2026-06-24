@@ -1,11 +1,11 @@
 # CI/CD Step 3: Create Release PR
-# Triggers sequentially after "Build Application" finishes successfully on the testing branch.
+# Triggers sequentially after "Run Tests" finishes successfully on the testing branch.
 # Creates/opens a Pull Request from testing to release branch.
 name: Create Release PR
 
 on:
   workflow_run:
-    workflows: ["Build Application"]
+    workflows: ["Run Tests"]
     types:
       - completed
     branches:
