@@ -160,6 +160,10 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
 ```
 *   **Why we did this:** Reusing cached `node_modules` across runs cuts the workflow duration by up to 80% because it skips executing `npm install` from scratch if dependencies haven't changed.
+*   **Key Expressions Explained:**
+    *   **`id: cache-npm`**: <span style="font-size: 1.1em;">We assign an identifier to this step so that subsequent steps can query its outcome (e.g. check if the cache was found).</span>
+    *   **`${{ runner.os }}`**: <span style="font-size: 1.1em;">A GitHub Actions context variable that resolves to the runner's operating system (e.g. `Linux`). We include this in the key so that if the runner OS changes, we don't accidentally load incompatible binary dependencies.</span>
+    *   **`${{ hashFiles('**/package-lock.json') }}`**: <span style="font-size: 1.1em;">A built-in GitHub Actions function that calculates a unique cryptographic SHA-256 hash of the `package-lock.json` file. If you add or update any packages, the lockfile changes, which changes this hash. This invalidates the old cache key and forces the pipeline to download the fresh packages.</span>
 
 #### Step: Install Dependencies
 ```yaml
@@ -168,6 +172,9 @@ jobs:
         run: npm ci
 ```
 *   **Why we did this:** Runs `npm ci` (clean install) only if there is a cache miss. This ensures deterministic builds.
+*   **Key Expressions Explained:**
+    *   **`if: steps.cache-npm.outputs.cache-hit != 'true'`**: <span style="font-size: 1.1em;">A conditional expression. It checks the output of the step named `cache-npm`. If the output variable `cache-hit` is not equal to `'true'` (meaning the dependencies were not found in the cache), the installation command is executed. Otherwise, it is skipped entirely.</span>
+    *   **`npm ci`**: <span style="font-size: 1.1em;">Instead of `npm install`, `npm ci` is designed specifically for automated environments. It is faster, stricter, and throws an error if the `package-lock.json` is out of sync with `package.json`, ensuring absolute build reproducibility.</span>
 
 #### Step: Next.js Build Cache
 ```yaml
@@ -180,6 +187,9 @@ jobs:
             ${{ runner.os }}-next-${{ hashFiles('**/package-lock.json') }}-
 ```
 *   **Why we did this:** Next.js uses an incremental cache for build outputs. Persisting `.next/cache` between runs drastically speeds up compilation times.
+*   **Key Expressions Explained:**
+    *   **`${{ github.workspace }}`**: <span style="font-size: 1.1em;">Resolves to the absolute workspace path where the repository is checked out on the virtual machine runner.</span>
+    *   **`restore-keys`**: <span style="font-size: 1.1em;">Fallback cache keys. If the exact cache key (which includes hashes of all source code files) is not found, GitHub Actions will fall back to using the most recent cache matching the prefix specified in `restore-keys`. This allows Next.js to reuse partial compilation state even if the source code changed.</span>
 
 #### Step: Build Project
 ```yaml
@@ -189,6 +199,8 @@ jobs:
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
 ```
 *   **Why we did this:** Compiles the application into static routes and optimized server scripts. Since the build process typechecks and lints the code, it acts as a primary check to catch compilation issues before any testing.
+*   **Key Expressions Explained:**
+    *   **`${{ secrets.ENCRYPTION_KEY }}`**: <span style="font-size: 1.1em;">Safely retrieves the encryption secret configured in the repository's GitHub Actions secrets panel (`Settings -> Secrets and variables -> Actions`). This allows Next.js to access this key during static page generation and server builds without exposing the key in the source code.</span>
 
 #### Step: Upload Build Artifact
 ```yaml
@@ -212,7 +224,9 @@ This job runs the unit and integration test suites.
     needs: build
     runs-on: ubuntu-latest
 ```
-*   **Why we did this:** By using `needs: build`, this job will only execute if the project builds successfully. If compiling fails, we save action minutes by not running tests on broken code.
+*   **Why we did this:**
+    *   `needs: build`: A dependency constraint. It ensures the `test` job only runs if the `build` job completes successfully. If compilation fails, testing is skipped, saving build minutes.
+    *   `runs-on: ubuntu-latest`: Specifies that the job should run on a virtual machine pre-configured with the latest stable Ubuntu operating system.
 
 #### Step: Download Build Artifact
 ```yaml
@@ -246,7 +260,9 @@ Automates pull request generation.
       pull-requests: write
       contents: write
 ```
-*   **Why we did this:** This job requires both `build` and `test` to have completed successfully. We explicitly grant `pull-requests: write` and `contents: write` permissions so the runner can interact with GitHub's pull request APIs.
+*   **Why we did this:**
+    *   `needs: [build, test]`: Ensures this job only runs if both building and testing complete successfully.
+    *   `permissions`: Defines the security clearance of the temporary `GITHUB_TOKEN` issued for the job. We request `pull-requests: write` to open a PR, and `contents: write` to update repository branches.
 
 #### Step: Create Pull Request
 ```yaml
@@ -266,6 +282,20 @@ Automates pull request generation.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 *   **Why we did this:** Instead of using third-party workflow actions that require custom access tokens, we use the pre-installed GitHub CLI (`gh`). The script first checks if an open PR already exists from `testing` to `release` to avoid duplicate requests. If none exists, it opens a clean release PR automatically.
+*   **Key Expressions Explained:**
+    *   **`gh pr list --head testing --base release --json number --jq '.[0].number'`**: <span style="font-size: 1.1em;">Uses the GitHub CLI to list open pull requests from the `testing` branch to the `release` branch. The output is filtered down to the JSON field `number` and queried using `jq` to select the number of the first matching PR. If a PR exists, it resolves to its number; otherwise, it resolves to an empty string.</span>
+    *   **`GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}`**: <span style="font-size: 1.1em;">The default auth token generated by GitHub for the run. This is passed into the environment of the GitHub CLI (`gh`) to authenticate the API request for creating the PR.</span>
+
+---
+
+## 6. Branching Strategy
+
+The repository follows a clean branch workflow to transition features safely:
+
+*   `dev`: The active development branch. All developer commits are initially pushed here or merged via feature branches.
+*   `testing`: The pre-release staging branch. Pushes to this branch trigger the automated CI/CD pipeline, building the application and running tests against the production build.
+*   `release`: The production-ready branch. Pull requests target this branch from `testing` automatically upon pipeline success.
+*   `main`: The principal branch representing the current stable deployment.
 
 ---
 
