@@ -392,18 +392,14 @@ Capture each test job's `$GITHUB_STEP_SUMMARY` output and pass it through job ou
 
 ## ✅ Final Pipeline Flow
 
-```
-push to `testing` branch
-        │
-        ▼
-     [ build ]
-        │
-   ┌────┴────┐
-   ▼         ▼
-[unit-test] [integration-test]
-   └────┬────┘
-        ▼
-   [create-pr] → opens/refreshes PR: testing → release
+```mermaid
+flowchart TD
+    A("Push to 'testing' branch") --> B("build")
+    B --> C("unit-test")
+    B --> D("integration-test")
+    C --> E("create-pr")
+    D --> E
+    E --> F("Opens/Refreshes PR: testing ➜ release")
 ```
 
 > [!IMPORTANT]
