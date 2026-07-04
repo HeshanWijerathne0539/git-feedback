@@ -44,3 +44,5 @@ next-env.d.ts
 /data/
 /data-test/
 /public/uploads/
+*.db-shm
+*.db-wal
